@@ -9,7 +9,10 @@ import pickle
 import torch.nn as nn
 import os 
 # import csv
+import sys
+from torch.nn.utils.rnn import pad_sequence
 from transformers import BertTokenizer
+from transformers import AutoTokenizer, AutoModel
 random.seed(1000)
 np.random.seed(1000)
 torch.manual_seed(1000)
@@ -51,24 +54,79 @@ class Engagement_cls():
         # convert query, reply into bert embedding  
         # Need to confirm whether need + eos
         MAX_LENGTH = 60
-        tokenizer = BertTokenizer.from_pretrained("/work/b07u1234/tien/Chatbot-Project/uncased_L-24_H-1024_A-16/")
+        # tokenizer = BertTokenizer.from_pretrained("/work/b07u1234/tien/Chatbot-Project/uncased_L-24_H-1024_A-16/")
+        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        Model = AutoModel.from_pretrained("bert-base-uncased")
         self.query = query
         self.reply = reply
+        Q_vector = []
         
+        masks = []
         for q in self.query:
-            temp = torch.zeros(1, MAX_LENGTH)
-            query = tokenizer.encode(q + "<|endoftext|>", return_tensors='pt').to('cuda')
+            # temp = torch.zeros(1, MAX_LENGTH)
+            q_enc = []
+            masks = []
+            
+            q_enc.append(tokenizer.encode(q))
+            masks.append([1 for i in range(len(tokenizer.encode(q)))])
+            
+            inputs = torch.tensor(q_enc)
+            masks = torch.tensor(masks)
+            
+            Last_layer_output, _, hidden_state  = Model(inputs, masks, output_hidden_states=True)
+            last_to_2 = hidden_state[-2] # the 2 to the last layer output
+            
+            q_emb = torch.mean(last_to_2, dim = 1) # Reduce mean
+            # print(f"Size of q_emb is {q_emb.size()}")
+            self.query_emb[q] = q_emb
+            # print("last layer", Last_layer_output)
+            # print("-2layer" ,hidden_state[-2])
+            # print("11layer" ,hidden_state[11])
+            # if Last_layer_output.item() == hidden_state[0].item():
+                # print("reverse")
+            # if Last_layer_output == hidden_state[-1]:
+                # print("unreverse")
+            # print(np.shape(hidden_state))
+            # print(hidden_state[0].size())
+            # print(hidden_state[1].size())
+            # print(hidden_state[-2].size())
+            # print(hidden_state.size())
+        # sent_token_padding = pad_sequence([q], maxlen=60, padding='post', dtype='int')
+        # masks = [[float(value>0) for value in values] for values in sent_token_padding]
+        # q_enc = pad_sequence([torch.LongTensor(x) for x in q_enc], batch_first=True, padding_value=0)
+        # masks = pad_sequence([torch.LongTensor(x) for x in masks], batch_first=True, padding_value=0)
+        # print(q_enc.size())
+        # print(masks.size())
+        
+        # output = Q_embedded[0]
+        # hidden_state = output[:][10][:] # Get the 2 to last layer output
+       
+            # Q_vector.append()
+            
             # print(query)
             # print(query.size())
             # print(temp)
             # print(temp.size())
-            temp[ : , : len(query[0])] = query[:]
-            self.query_emb[q] = temp
+            # temp[ : , : len(query[0])] = query[:]
+            # self.query_emb[q] = temp
+        # sys.exit(0)
         for r in self.reply:
-            temp = torch.zeros(1, MAX_LENGTH)
-            reply = tokenizer.encode(r + "<|endoftext|>", return_tensors='pt').to('cuda')
-            temp[ : , : len(reply[0])] = reply
-            self.reply_emb[r] = temp
+            r_enc = []
+            masks = []
+            
+            r_enc.append(tokenizer.encode(r))
+            masks.append([1 for i in range(len(tokenizer.encode(r)))])
+            
+            inputs = torch.tensor(r_enc)
+            masks = torch.tensor(masks)
+            
+            Last_layer_output, _, hidden_state  = Model(inputs, masks, output_hidden_states=True)
+            last_to_2 = hidden_state[-2] # the 2 to the last layer output
+            
+            r_emb = torch.mean(last_to_2, dim = 1) # Reduce mean
+            # print(f"Size of q_emb is {r_emb.size()}")
+            self.reply_emb[r] = r_emb
+            # self.reply_emb[r] = temp
         
         
     def generate_eng_score(self):
@@ -95,20 +153,25 @@ class Engagement_cls():
         # groundtruth_replies =fr_groundtruth_replies.readlines() 
 
         print('begining of prediction')
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                print (name, param.data, param.shape)
+        # for name, param in model.named_parameters():
+            # if param.requires_grad:
+                # print (name, param.data, param.shape)
         # for stidx in range(0, self.test_size, self.batch_size):
             # x_q = self.test_queries[stidx:stidx + self.batch_size]
             # x_r = self.test_replies[stidx:stidx + self.batch_size]
             # x_groundtruth_r = groundtruth_replies[stidx:stidx + self.batch_size]
+        print(f"Query size is {np.shape(self.query)}")
+        print(f"reply size is {np.shape(self.query)}")
+        # print(f"Query size is {self.query.size()")
+        # print(f"Query size is {self.query.size()")
         model_output = model(self.query, self.reply, self.query_emb, self.reply_emb)
+        print("model_output : ", model_output.size())
         pred_eng = torch.nn.functional.softmax(model_output, dim=1)
             # for ind in range(len(self.query_emb)):
                 # fw_pred_labels.write(x_q[ind]+'==='+x_groundtruth_r[ind].split('\n')[0]+'==='+x_r[ind]+'==='+str(pred_eng[ind][1].item())+'\n')
-         
+        print(pred_eng)
         print('The engagingness score for specified replies has been predicted!')
-        return pred_eng[:][1].item()
+        return pred_eng
 
 
     def get_eng_score(self, query, q_embed, reply, r_embed, model):
@@ -132,6 +195,7 @@ class Engagement_cls():
         model.eval()
 
         model_output = model(query, reply, q_embed, r_embed)
+        # print
         pred_eng = torch.nn.functional.softmax(model_output, dim=1)
         return pred_eng
 
@@ -159,20 +223,21 @@ class  BiLSTM(nn.Module):
                 print('the query {} embedding has not been found in the embedding file'.format(q))
         # X_q = torch.zeros(1,1,60)
         # X_r = torch.zeros(1,1,60)
-        X_q = torch.tensor([queries_embeds[q].cpu().detach().numpy() for q in queries_input]).to("cuda")
-        # print("Q is ",X_q)
+        X_q = torch.tensor([queries_embeds[q].cpu().detach().numpy() for q in queries_input]).squeeze(1).to("cuda")
+        print("Q is ",X_q.size())
         for r in replies_input:
             # print("Query is ",r)
             # print("Reply Embedding is ",replies_embeds[r])
             if r not in replies_embeds.keys():
                 print('the reply {} embedding has not been found in the embedding file'.format(r))
-        X_r = torch.tensor([replies_embeds[r].cpu().detach().numpy() for r in replies_input]).to("cuda")
-        
+        X_r = torch.tensor([replies_embeds[r].cpu().detach().numpy() for r in replies_input]).squeeze(1).to("cuda")
+        print("R is ",X_r.size())
         if torch.cuda.is_available():
             X_q, X_r = X_q.cuda(), X_r.cuda()
         mlp_input=X_q.add(X_r)
         mlp_input = torch.div(mlp_input,2)
-        print(mlp_input.size())
+        # print(mlp_input[0])
+        # print(mlp_input[1])
         mlp_h_0 = torch.tanh(self.mlp_hidden_0(mlp_input))
         mlp_h_0= self.dropout(mlp_h_0)
     
@@ -214,8 +279,14 @@ def main():
     # data_dir = './../data/'
     #train_dir = './../model/'
     train_dir = "/work/b07u1234/tien/Chatbot-Project/PredictiveEngagement/model/"
-    queries =  ["Hi, how are you ?", "Are you ok right now ?", "Can I friend you on facebook, lady ?" ]
-    replies =  ["It's really good, and you ?", "No, stay away from me !", "Yes, definitely, what's your facebook ID ?"]
+    queries =  ["OK. What’s the reason you are sending her flowers?", 
+                "The kitchen may be large, but it doesn’t have any storage space.", 
+                "Not long, because people rush for lunch.",
+                "That’s a good idea. And remind them to be slow at the beginning, not to run into the railings." ]
+    replies =  ["Today’s her birthday and she told me she wants me to buy her flowers. ", 
+                "The master suite is supposed to be quite elegant. Maybe it will be a little better.", 
+                "The line sure does move fast",
+                "OK. Anything else?"]
     # queries = [queries[0]]
     # replies = [replies[0]]
     eng_cls = Engagement_cls(train_dir, args.batch_size, args.mlp_hidden_dim, args.epochs, \
@@ -226,8 +297,9 @@ def main():
         print("-------------------------------------------------------------------------")
         print(f"Query: {q}")
         print(f"Replies: {r}")
-        print(f"Score: {s}")
+        print(f"Engaging Score: {s[1]}")
         print("-------------------------------------------------------------------------")
 
 
 main()
+
